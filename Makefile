@@ -39,7 +39,7 @@ JLINKEXE		?= /opt/SEGGER/JLink/JLinkExe
 PYOCD_EXE		?= pyocd
 
 ##### Paths ############
-PROJSRC	:= demos/py32f002a-i2c-slave
+PROJSRC	:= demos/py32f002a-i2c-slave-it
 # C and CPP source folders
 CDIRS		:= ${PROJSRC}
 # Single C and CPP source files

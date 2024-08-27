@@ -36,7 +36,7 @@ typedef enum
 #define LEDn                               1
 
 // #ifdef PY32F002A_SOP8
-#define LED3_PIN                           LL_GPIO_PIN_4
+#define LED3_PIN                           LL_GPIO_PIN_5
 #define LED3_GPIO_PORT                     GPIOA
 #define LED3_GPIO_CLK_ENABLE()             LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA)
 #define LED3_GPIO_CLK_DISABLE()            LL_IOP_GRP1_DisableClock(LL_IOP_GRP1_PERIPH_GPIOA)
