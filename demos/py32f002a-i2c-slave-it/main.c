@@ -57,6 +57,7 @@ typedef struct app_i2c_s{
 static app_i2c_t _app_i2c = { .status = i2cs_busy_rx, .rpc_count = 0, .recv_len = 0, .resp_len = 0, .resp_send = 0};
 
 /* Private function prototypes -----------------------------------------------*/
+static void     APP_CheckAndDisableNRST(void);
 static void     APP_ConfigI2cSlave(void);
 static void     APP_LED_BlinkFast(int count);
 static void     APP_SlaveMake_IT(int status);
@@ -68,6 +69,7 @@ int main(void)
   BSP_RCC_HSI_8MConfig();
   LL_mDelay(1000);
 
+  APP_CheckAndDisableNRST();
   /* 初始化LED */
   BSP_LED_Init(LED_GREEN);
 
@@ -86,6 +88,30 @@ int main(void)
     LL_mDelay(1);
     // do other jobs
     // ...
+  }
+}
+
+static void APP_CheckAndDisableNRST(void)
+{
+  /* 如果没关闭则调用 */
+  if(READ_BIT(FLASH->OPTR, FLASH_OPTR_NRST_MODE) == OB_RESET_MODE_RESET){
+    FLASH_OBProgramInitTypeDef OBInitCfg;
+
+    LL_FLASH_Unlock();
+    LL_FLASH_OB_Unlock();
+
+    OBInitCfg.OptionType = OPTIONBYTE_USER;
+    OBInitCfg.USERType = OB_USER_BOR_EN | OB_USER_BOR_LEV | OB_USER_IWDG_SW | OB_USER_NRST_MODE | OB_USER_nBOOT1;
+    /*
+     * 默认的值: OB_BOR_DISABLE | OB_BOR_LEVEL_3p1_3p2 | OB_IWDG_SW | OB_RESET_MODE_RESET | OB_BOOT1_SYSTEM;
+    */
+    OBInitCfg.USERConfig = OB_BOR_DISABLE | OB_BOR_LEVEL_3p1_3p2 | OB_IWDG_SW | OB_RESET_MODE_GPIO | OB_BOOT1_SYSTEM;
+    LL_FLASH_OBProgram(&OBInitCfg);
+
+    LL_FLASH_Lock();
+    LL_FLASH_OB_Lock();
+    /* 重新载入OB, 这会触发软复位, MCU重启 */
+    LL_FLASH_OB_Launch();
   }
 }
 
