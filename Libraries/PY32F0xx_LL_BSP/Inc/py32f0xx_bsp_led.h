@@ -35,10 +35,26 @@ typedef enum
 
 #define LEDn                               1
 
+// #ifdef PY32F002A_SOP8
+#define LED3_PIN                           LL_GPIO_PIN_4
+#define LED3_GPIO_PORT                     GPIOA
+#define LED3_GPIO_CLK_ENABLE()             LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA)
+#define LED3_GPIO_CLK_DISABLE()            LL_IOP_GRP1_DisableClock(LL_IOP_GRP1_PERIPH_GPIOA)
+// #endif
+
+/*
+#ifdef PY32F002A_DEVKIT
+#define LED3_PIN                           LL_GPIO_PIN_5
+#define LED3_GPIO_PORT                     GPIOA
+#define LED3_GPIO_CLK_ENABLE()             LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA)
+#define LED3_GPIO_CLK_DISABLE()            LL_IOP_GRP1_DisableClock(LL_IOP_GRP1_PERIPH_GPIOA)
+#else
 #define LED3_PIN                           LL_GPIO_PIN_5
 #define LED3_GPIO_PORT                     GPIOB
 #define LED3_GPIO_CLK_ENABLE()             LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOB)
 #define LED3_GPIO_CLK_DISABLE()            LL_IOP_GRP1_DisableClock(LL_IOP_GRP1_PERIPH_GPIOB)
+#endif
+*/
 
 #define LEDx_GPIO_CLK_ENABLE(__INDEX__)    do {LED3_GPIO_CLK_ENABLE(); } while(0U)
 #define LEDx_GPIO_CLK_DISABLE(__INDEX__)   LED3_GPIO_CLK_DISABLE()

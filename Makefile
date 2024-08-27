@@ -10,12 +10,12 @@ BUILD_DIR		= Build
 #   PY32F003x4, PY32F003x6, PY32F003x8,
 #   PY32F030x6, PY32F030x8, 
 #   PY32F072xB
-MCU_TYPE		= PY32F003x4
+MCU_TYPE		= PY32F002Ax5
 
 ##### Options #####
 
 # Use LL library instead of HAL, y:yes, n:no
-USE_LL_LIB ?= n
+USE_LL_LIB ?= y
 # Enable printf float %f support, y:yes, n:no
 ENABLE_PRINTF_FLOAT	?= n
 # Build with FreeRTOS, y:yes, n:no
@@ -31,7 +31,7 @@ FLASH_PROGRM	?= pyocd
 
 #ARM_TOOCHAIN	?= /opt/gcc-arm/gcc-arm-11.2-2022.02-x86_64-arm-none-eabi/bin
 #ARM_TOOCHAIN	?= /opt/gcc-arm/arm-gnu-toolchain-11.3.rel1-x86_64-arm-none-eabi/bin
-ARM_TOOCHAIN	?= /opt/gcc-arm/arm-gnu-toolchain-13.2.Rel1-x86_64-arm-none-eabi/bin
+ARM_TOOCHAIN	?= ~/opt/arm-gnu-toolchain-13.3.rel1-darwin-x86_64-arm-none-eabi/bin
 
 # path to JLinkExe
 JLINKEXE		?= /opt/SEGGER/JLink/JLinkExe
@@ -39,22 +39,22 @@ JLINKEXE		?= /opt/SEGGER/JLink/JLinkExe
 PYOCD_EXE		?= pyocd
 
 ##### Paths ############
-
+PROJSRC	:= demos/py32f002a-i2c-slave
 # C and CPP source folders
-CDIRS		:= User 
+CDIRS		:= ${PROJSRC}
 # Single C and CPP source files
 CFILES		:= 
 CPPFILES	:= 
 
 # ASM source folders
-ADIRS		:= User
+ADIRS		:= ${PROJSRC}
 # Single ASM source files
 AFILES		:= 
 
 # Include paths
 INCLUDES	:= Libraries/CMSIS/Core/Include \
 			Libraries/CMSIS/Device/PY32F0xx/Include \
-			User
+			${PROJSRC}
 
 ##### Library Paths ############
 
