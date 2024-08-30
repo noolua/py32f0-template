@@ -48,6 +48,8 @@ extern "C" {
 #include "py32f0xx_ll_gpio.h"
 #include "py32f0xx_ll_i2c.h"
 #include "py32f0xx_ll_flash.h"
+#include "py32f0xx_ll_tim.h"
+#include "py32f0xx_ll_lptim.h"
 
 #if defined(USE_FULL_ASSERT)
 #include "py32_assert.h"
@@ -57,7 +59,14 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
 /* Exported macro ------------------------------------------------------------*/
+
+#define PY32F002A_SOP8
+#ifdef PY32F002A_SOP8
 #define PY32_OWN_ADDRESS                        (0x50) /* 从机地址 */
+#else
+#define PY32_OWN_ADDRESS                        (0x31) /* 从机地址 */
+#warning "THIS VERSION IS FOR PY32F002A_DEVKIT, I2C_ADDR is 0x31"
+#endif
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);

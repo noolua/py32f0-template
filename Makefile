@@ -40,6 +40,9 @@ PYOCD_EXE		?= pyocd
 
 ##### Paths ############
 PROJSRC	:= demos/py32f002a-i2c-slave-it
+# PROJSRC	:= Examples/PY32F0xx/LL/LPTIM/LPTIM1_OneShot
+
+
 # C and CPP source folders
 CDIRS		:= ${PROJSRC}
 # Single C and CPP source files
