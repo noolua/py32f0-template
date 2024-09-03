@@ -30,16 +30,19 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 // #define PY32F002A_DEVKIT
-#include "py32f0xx_bsp_led.h"
+// #include "py32f0xx_bsp_led.h"
 #include "py32f0xx_bsp_clock.h"
 
 /* Private define ------------------------------------------------------------*/
+#define ESP_RST_PIN           (LL_GPIO_PIN_4)
+
 #define I2C_BUFF_SZ           (64)
 enum{
-  i2cs_busy_rx = 0,
+  i2cs_ready,
+  i2cs_waiting_ack,
+  i2cs_busy_rx,
   i2cs_busy_tx,
-  i2cs_busy_tx_done,
-  i2cs_ready
+  i2cs_tx_done,
 };
 #define I2C_CMD_ADD           ('a')   // add
 #define I2C_CMD_SUB           ('d')   // sub
@@ -49,10 +52,9 @@ enum{
 #define I2C_CMD_TIMENOW       ('n')   // get timestamp
 #define I2C_CMD_ERR           (0xEE)
 
-#define TIME4LED              (70)    // led toggle time
 /* Private variables ---------------------------------------------------------*/
 typedef struct app_i2c_s{
-  __IO int32_t tim1_tick, lptim_tick;
+  int32_t tim1_tick, lptim_tick;
   int32_t delta_time, status;
   uint32_t stoptimes, rpc_count;
   uint8_t recv_len, resp_len, resp_send;
@@ -60,29 +62,52 @@ typedef struct app_i2c_s{
 }app_i2c_t;
 
 
-#define ts_tick()     ((_app_i2c.tim1_tick>>2) + _app_i2c.lptim_tick)
+#define ts_tick()     ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick)
 #define ts_now()      (ts_tick() + _app_i2c.delta_time)
 
 static app_i2c_t _app_i2c = {
-  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_busy_rx,
+  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready,
   .stoptimes = 0U, .rpc_count = 0U, .recv_len = 0, .resp_len = 0, .resp_send = 0
 };
 
 /* Private function prototypes -----------------------------------------------*/
 static void APP_ConfigLPTIMOneShot(void);
 static void APP_TIM1Config(void);
-static void APP_EnterStop(void);
+// static void APP_EnterStop(void);
+// static void APP_uDelay(uint32_t us);
 
 static void     APP_InitI2cSlave(void);
-static void     APP_LED_BlinkFast(int count);
-static void     APP_SlaveMake_IT(int status);
+static void     APP_GPIOConfig(void);
+static void     APP_TriggerESPRST();
+static void     APP_SlaveAckReady(void);
 static void     APP_HandleI2CSalve(void);
 #ifdef PY32F002A_SOP8
 static void     APP_CheckAndDisableNRST(void);
 #endif
 
+static void APP_receive8(void){
+  if(_app_i2c.recv_len < I2C_BUFF_SZ){
+    _app_i2c.recv_buffer[_app_i2c.recv_len] = LL_I2C_ReceiveData8(I2C1);
+    _app_i2c.recv_len++;
+  }else{
+    __IO uint32_t tmpreg;
+    tmpreg = LL_I2C_ReceiveData8(I2C1);
+    (void)tmpreg;
+  }
+}
+
+static void APP_transmit8(void){
+  if(_app_i2c.resp_send < _app_i2c.resp_len){
+    LL_I2C_TransmitData8(I2C1, _app_i2c.resp_buffer[_app_i2c.resp_send]);
+    _app_i2c.resp_send++;
+  }else{
+    LL_I2C_TransmitData8(I2C1, 0x00);
+  }
+}
+static int32_t ts_next = 0;
 int main(void)
 {
+  // int32_t ts_next = 30;
   /* 配置系统时钟 */
   BSP_RCC_HSI_8MConfig();
   APP_TIM1Config();
@@ -91,8 +116,9 @@ int main(void)
 #ifdef PY32F002A_SOP8
   APP_CheckAndDisableNRST();
 #endif
-  /* 初始化LED */
-  BSP_LED_Init(LED_GREEN);
+
+  /* 初始化GPIO */
+  APP_GPIOConfig();
 
   /*配置LPTIM*/
   APP_ConfigLPTIMOneShot();
@@ -100,28 +126,29 @@ int main(void)
   /* 配置I2C1（Slave模式下的I2C配置及相关GPIO初始化）,并使能*/
   APP_InitI2cSlave();
 
-  /* 闪烁LED表示开始工作 */
-  APP_LED_BlinkFast(3);
-
   /*开始接收i2c消息*/
-  APP_SlaveMake_IT(i2cs_busy_rx);
+  APP_SlaveAckReady();
 
   /* 处理 I2C1 事件（从机） */
   while(1){
-    if(_app_i2c.status == i2cs_busy_rx){
-      if(_app_i2c.stoptimes > 0){
-        // save more power
+    if(_app_i2c.status == i2cs_tx_done){
+      // if(_app_i2c.stoptimes > 0){
+      //   // save more power
 
-        while(_app_i2c.stoptimes > 0){
-          _app_i2c.stoptimes--;
-          APP_EnterStop();
-        }
+      //   while(_app_i2c.stoptimes > 0){
+      //     _app_i2c.stoptimes--;
+      //     APP_EnterStop();
+      //   }
+      //   // APP_TriggerESPRST();
+      // }
 
+      if(ts_next != 0 && ts_next < ts_now()){
+        ts_next = 0;
+        APP_TriggerESPRST();
       }
     }
-
     APP_HandleI2CSalve();
-    LL_mDelay(1);
+    // LL_mDelay(1);
     // do other jobs
     // ...
   }
@@ -162,7 +189,7 @@ static void APP_TIM1Config(void)
   TIM1CountInit.ClockDivision       = LL_TIM_CLOCKDIVISION_DIV1;
   TIM1CountInit.CounterMode         = LL_TIM_COUNTERMODE_UP;
   TIM1CountInit.Prescaler           = 8000-1;
-  TIM1CountInit.Autoreload          = 250-1; /* quarter-second */
+  TIM1CountInit.Autoreload          = 500-1; /* half-second */
   TIM1CountInit.RepetitionCounter   = 0;
   LL_TIM_Init(TIM1,&TIM1CountInit);
 
@@ -173,10 +200,22 @@ static void APP_TIM1Config(void)
   NVIC_SetPriority(TIM1_BRK_UP_TRG_COM_IRQn,0);
 }
 
+static void APP_GPIOConfig(void)
+{
+  LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
+  LL_GPIO_SetPinMode(GPIOA, ESP_RST_PIN, LL_GPIO_MODE_OUTPUT);
+  LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+}
+
+static void APP_TriggerESPRST(void){
+  LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
+  LL_mDelay(80);
+  LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+}
+
 static void APP_ConfigLPTIMOneShot(void)
 {
 
-  // LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_LPTIM1);
   LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_LPTIM1);
   LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
 
@@ -199,19 +238,34 @@ static void APP_ConfigLPTIMOneShot(void)
   NVIC_SetPriority(LPTIM1_IRQn, 0);
 }
 
-void APP_EnterStop(void){
-  LL_PWR_EnableLowPowerRunMode();
-  LL_LPTIM_Disable(LPTIM1);
-  LL_LPTIM_Enable(LPTIM1);
-  LL_mDelay(1);
+// static void APP_uDelay(uint32_t us)
+// {
+//   uint32_t temp;
+//   SysTick->LOAD=us*(SystemCoreClock/1000000);
+//   SysTick->VAL=0x00;
+//   SysTick->CTRL|=SysTick_CTRL_ENABLE_Msk;
 
-  LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE2);
-  LL_PWR_SetSramRetentionVolt(LL_PWR_SRAM_RETENTION_VOLT_0p9);
+//   do{
+//     temp=SysTick->CTRL;
+//   }while((temp&0x01)&&!(temp&(1<<16)));
 
-  LL_LPTIM_StartCounter(LPTIM1, LL_LPTIM_OPERATING_MODE_ONESHOT);
-  LL_LPM_EnableDeepSleep();
-  __WFI();
-}
+//   SysTick->CTRL=SysTick_CTRL_ENABLE_Msk;
+//   SysTick->VAL =0x00;
+// }
+
+// void APP_EnterStop(void){
+//   LL_PWR_EnableLowPowerRunMode();
+//   LL_LPTIM_Disable(LPTIM1);
+//   LL_LPTIM_Enable(LPTIM1);
+//   LL_mDelay(1);
+
+//   LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE2);
+//   LL_PWR_SetSramRetentionVolt(LL_PWR_SRAM_RETENTION_VOLT_0p9);
+
+//   LL_LPTIM_StartCounter(LPTIM1, LL_LPTIM_OPERATING_MODE_ONESHOT);
+//   LL_LPM_EnableDeepSleep();
+//   __WFI();
+// }
 
 
 static void APP_InitI2cSlave(void)
@@ -219,7 +273,7 @@ static void APP_InitI2cSlave(void)
   /* (1) 使能 GPIO 时钟 ************************/
 
   /* 使能 GPIOA 的外设时钟 */
-  LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
+  // LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
 
   /* (2) 使能 I2C1 外设时钟 *************************************/
 
@@ -275,8 +329,8 @@ static void APP_InitI2cSlave(void)
 }
 
 static void APP_HandleI2CSalve(void){
-  if(_app_i2c.status == i2cs_busy_tx_done){
-    APP_SlaveMake_IT(i2cs_busy_rx);
+  if(_app_i2c.status == i2cs_tx_done){
+    APP_SlaveAckReady();
   }else if(_app_i2c.status == i2cs_ready){
     uint8_t cmd = I2C_CMD_ERR;
     if(_app_i2c.recv_len > 0)
@@ -285,34 +339,31 @@ static void APP_HandleI2CSalve(void){
     case I2C_CMD_ADD:{
       int a = *(int*)&_app_i2c.recv_buffer[1];
       int b = *(int*)&_app_i2c.recv_buffer[5];
-      *(int*)&_app_i2c.resp_buffer[0] = a + b + b;
+      *(int*)&_app_i2c.resp_buffer[0] = a + b;
       _app_i2c.resp_len = 4;
       _app_i2c.rpc_count++;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     case I2C_CMD_SUB:{
       int a = *(int*)&_app_i2c.recv_buffer[1];
       int b = *(int*)&_app_i2c.recv_buffer[5];
-      *(int*)&_app_i2c.resp_buffer[0] = a - b - b;
+      *(int*)&_app_i2c.resp_buffer[0] = a - b;
       _app_i2c.resp_len = 4;
       _app_i2c.rpc_count++;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     case I2C_CMD_RPC_COUNT:{
       _app_i2c.rpc_count++;
       *(int*)&_app_i2c.resp_buffer[0] = _app_i2c.rpc_count;
       _app_i2c.resp_len = 4;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     case I2C_CMD_STOP:{
       _app_i2c.rpc_count++;
-      *(uint32_t*)&_app_i2c.stoptimes = *(uint32_t*)&_app_i2c.recv_buffer[1];
-      *(int*)&_app_i2c.resp_buffer[0] = ts_now();
+      int32_t seconds = *(int32_t*)&_app_i2c.recv_buffer[1];
+      *(int32_t*)&_app_i2c.resp_buffer[0] = seconds;
+      ts_next = ts_now() + seconds;
       _app_i2c.resp_len = 4;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     case I2C_CMD_TIME:{
@@ -321,25 +372,22 @@ static void APP_HandleI2CSalve(void){
       _app_i2c.delta_time = ts - ts_tick();
       *(int*)&_app_i2c.resp_buffer[0] = ts_now();
       _app_i2c.resp_len = 4;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     case I2C_CMD_TIMENOW:{
       _app_i2c.rpc_count++;
       *(int*)&_app_i2c.resp_buffer[0] = ts_now();
       _app_i2c.resp_len = 4;
-      APP_SlaveMake_IT(i2cs_busy_tx);
       break;
     }
     default:
-      APP_SlaveMake_IT(i2cs_busy_rx);
-      APP_LED_BlinkFast(1);
       break;
     }
+    APP_SlaveAckReady();
   }
 }
 
-static void APP_SlaveMake_IT(int status)
+static void APP_SlaveAckReady()
 {
   /* 清pos */
   LL_I2C_DisableBitPOS(I2C1);
@@ -348,7 +396,7 @@ static void APP_SlaveMake_IT(int status)
   _app_i2c.recv_len = 0;
   _app_i2c.resp_send = 0;
   _app_i2c.recv_buffer[0] = I2C_CMD_ERR;
-  _app_i2c.status = status;
+  _app_i2c.status = i2cs_waiting_ack;
 
   /* 使能应答 */
   LL_I2C_AcknowledgeNextData(I2C1, LL_I2C_ACK);
@@ -359,14 +407,6 @@ static void APP_SlaveMake_IT(int status)
   LL_I2C_EnableIT_ERR(I2C1);
 }
 
-static void APP_LED_BlinkFast(int count)
-{
-  int times = count * 2;
-  while(times--){
-    BSP_LED_Toggle(LED_GREEN);
-    LL_mDelay(TIME4LED);
-  }
-}
 
 void APP_SlaveIRQCallback(void)
 {
@@ -374,51 +414,50 @@ void APP_SlaveIRQCallback(void)
   if ((LL_I2C_IsActiveFlag_ADDR(I2C1) == 1) && (LL_I2C_IsEnabledIT_EVT(I2C1) == 1))
   {
     LL_I2C_ClearFlag_ADDR(I2C1);
+
+    if(LL_I2C_GetTransferDirection(I2C1) == LL_I2C_DIRECTION_READ){
+      // slave recieve
+      _app_i2c.status = i2cs_busy_rx;
+    }else{
+      // slave transmit
+      _app_i2c.status = i2cs_busy_tx;
+    }
   }
   else if(LL_I2C_IsActiveFlag_STOP(I2C1) == 1){
 
-    if(_app_i2c.status == i2cs_busy_rx){
-      if(LL_I2C_IsActiveFlag_RXNE(I2C1)){
-        _app_i2c.recv_buffer[_app_i2c.recv_len] = LL_I2C_ReceiveData8(I2C1);
-        _app_i2c.recv_len++;
-      }
-      if(LL_I2C_IsActiveFlag_BTF(I2C1)){
-        _app_i2c.recv_buffer[_app_i2c.recv_len] = LL_I2C_ReceiveData8(I2C1);
-        _app_i2c.recv_len++;
-      }
-      _app_i2c.status = i2cs_ready;
-    }else if(_app_i2c.status == i2cs_busy_tx){
-      // LL_I2C_GenerateStopCondition(I2C1);
-    }
     LL_I2C_DisableIT_EVT(I2C1);
     LL_I2C_DisableIT_BUF(I2C1);
     LL_I2C_DisableIT_ERR(I2C1);
     LL_I2C_ClearFlag_STOP(I2C1);
+
+    if(LL_I2C_IsActiveFlag_RXNE(I2C1)){
+      APP_receive8();
+    }
+    if(LL_I2C_IsActiveFlag_BTF(I2C1)){
+      APP_receive8();
+    }
+    _app_i2c.status = i2cs_ready;
   }
   else if(_app_i2c.status == i2cs_busy_rx){
     if ((LL_I2C_IsActiveFlag_RXNE(I2C1) == 1) && (LL_I2C_IsEnabledIT_BUF(I2C1) == 1) && (LL_I2C_IsActiveFlag_BTF(I2C1) == 0))
     {
-      _app_i2c.recv_buffer[_app_i2c.recv_len] = LL_I2C_ReceiveData8(I2C1);
-      _app_i2c.recv_len++;
+      APP_receive8();
     }
     /* BTF标志位置位 */
     else if ((LL_I2C_IsActiveFlag_BTF(I2C1) == 1) && (LL_I2C_IsEnabledIT_EVT(I2C1) == 1))
     {
-      _app_i2c.recv_buffer[_app_i2c.recv_len] = LL_I2C_ReceiveData8(I2C1);
-      _app_i2c.recv_len++;
+      APP_receive8();
     }
   }
   else if(_app_i2c.status == i2cs_busy_tx){
     if ((LL_I2C_IsActiveFlag_TXE(I2C1) == 1) && (LL_I2C_IsEnabledIT_BUF(I2C1) == 1) && (LL_I2C_IsActiveFlag_BTF(I2C1) == 0))
     {
-      LL_I2C_TransmitData8(I2C1, _app_i2c.resp_buffer[_app_i2c.resp_send]);
-      _app_i2c.resp_send++;
+      APP_transmit8();
     }
     /* BTF标志位置位 */
     else if ((LL_I2C_IsActiveFlag_BTF(I2C1) == 1) && (LL_I2C_IsEnabledIT_EVT(I2C1) == 1))
     {
-      LL_I2C_TransmitData8(I2C1, _app_i2c.resp_buffer[_app_i2c.resp_send]);
-      _app_i2c.resp_send++;
+      APP_transmit8();
     }
   }
 }
@@ -437,8 +476,13 @@ void APP_SlaveIRQCallback_NACK(void)
       LL_I2C_DisableIT_BUF(I2C1);
       LL_I2C_DisableIT_ERR(I2C1);
       LL_I2C_ClearFlag_AF(I2C1);
-      APP_SlaveMake_IT(i2cs_busy_rx);
-      // _app_i2c.status = i2cs_busy_tx_done;
+      _app_i2c.status = i2cs_tx_done;
+
+
+      // if(ts_next != 0 && ts_next < ts_now()){
+      //   ts_next = 0;
+      //   APP_TriggerESPRST();
+      // }
     }
   }
 }
