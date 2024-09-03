@@ -42,7 +42,6 @@ enum{
   i2cs_waiting_ack,
   i2cs_busy_rx,
   i2cs_busy_tx,
-  i2cs_tx_done,
 };
 #define I2C_CMD_ADD           ('a')   // add
 #define I2C_CMD_SUB           ('d')   // sub
@@ -55,8 +54,8 @@ enum{
 /* Private variables ---------------------------------------------------------*/
 typedef struct app_i2c_s{
   int32_t tim1_tick, lptim_tick;
-  int32_t delta_time, status;
-  uint32_t stoptimes, rpc_count;
+  int32_t delta_time, status, reset_time;
+  uint32_t stopseconds, rpc_count;
   uint8_t recv_len, resp_len, resp_send;
   uint8_t recv_buffer[I2C_BUFF_SZ], resp_buffer[I2C_BUFF_SZ];
 }app_i2c_t;
@@ -66,8 +65,8 @@ typedef struct app_i2c_s{
 #define ts_now()      (ts_tick() + _app_i2c.delta_time)
 
 static app_i2c_t _app_i2c = {
-  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready,
-  .stoptimes = 0U, .rpc_count = 0U, .recv_len = 0, .resp_len = 0, .resp_send = 0
+  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready, .reset_time = 0,
+  .stopseconds = 0U, .rpc_count = 0U, .recv_len = 0, .resp_len = 0, .resp_send = 0
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,6 +80,8 @@ static void     APP_GPIOConfig(void);
 static void     APP_TriggerESPRST();
 static void     APP_SlaveAckReady(void);
 static void     APP_HandleI2CSalve(void);
+static void     APP_OnTimerUpdate(void);
+
 #ifdef PY32F002A_SOP8
 static void     APP_CheckAndDisableNRST(void);
 #endif
@@ -104,10 +105,8 @@ static void APP_transmit8(void){
     LL_I2C_TransmitData8(I2C1, 0x00);
   }
 }
-static int32_t ts_next = 0;
 int main(void)
 {
-  // int32_t ts_next = 30;
   /* 配置系统时钟 */
   BSP_RCC_HSI_8MConfig();
   APP_TIM1Config();
@@ -131,28 +130,20 @@ int main(void)
 
   /* 处理 I2C1 事件（从机） */
   while(1){
-    if(_app_i2c.status == i2cs_tx_done){
-      // if(_app_i2c.stoptimes > 0){
-      //   // save more power
-
-      //   while(_app_i2c.stoptimes > 0){
-      //     _app_i2c.stoptimes--;
-      //     APP_EnterStop();
-      //   }
-      //   // APP_TriggerESPRST();
-      // }
-
-      if(ts_next != 0 && ts_next < ts_now()){
-        ts_next = 0;
-        APP_TriggerESPRST();
-      }
-    }
     APP_HandleI2CSalve();
     // LL_mDelay(1);
     // do other jobs
     // ...
   }
 }
+
+static void  APP_OnTimerUpdate(void){
+  if(_app_i2c.reset_time != 0 && _app_i2c.reset_time < ts_now()){
+    _app_i2c.reset_time = 0;
+    APP_TriggerESPRST();
+  }
+}
+
 #ifdef PY32F002A_SOP8
 static void APP_CheckAndDisableNRST(void)
 {
@@ -329,9 +320,7 @@ static void APP_InitI2cSlave(void)
 }
 
 static void APP_HandleI2CSalve(void){
-  if(_app_i2c.status == i2cs_tx_done){
-    APP_SlaveAckReady();
-  }else if(_app_i2c.status == i2cs_ready){
+  if(_app_i2c.status == i2cs_ready){
     uint8_t cmd = I2C_CMD_ERR;
     if(_app_i2c.recv_len > 0)
       cmd = _app_i2c.recv_buffer[0];
@@ -362,7 +351,8 @@ static void APP_HandleI2CSalve(void){
       _app_i2c.rpc_count++;
       int32_t seconds = *(int32_t*)&_app_i2c.recv_buffer[1];
       *(int32_t*)&_app_i2c.resp_buffer[0] = seconds;
-      ts_next = ts_now() + seconds;
+      _app_i2c.stopseconds = seconds;
+      _app_i2c.reset_time = ts_now() + seconds + 1;
       _app_i2c.resp_len = 4;
       break;
     }
@@ -476,13 +466,7 @@ void APP_SlaveIRQCallback_NACK(void)
       LL_I2C_DisableIT_BUF(I2C1);
       LL_I2C_DisableIT_ERR(I2C1);
       LL_I2C_ClearFlag_AF(I2C1);
-      _app_i2c.status = i2cs_tx_done;
-
-
-      // if(ts_next != 0 && ts_next < ts_now()){
-      //   ts_next = 0;
-      //   APP_TriggerESPRST();
-      // }
+      APP_SlaveAckReady();
     }
   }
 }
@@ -492,6 +476,7 @@ void TIM1_BRK_UP_TRG_COM_IRQHandler(void)
 {
   if(LL_TIM_IsActiveFlag_UPDATE(TIM1) && LL_TIM_IsEnabledIT_UPDATE(TIM1))
   {
+    APP_OnTimerUpdate();
     _app_i2c.tim1_tick++;
     LL_TIM_ClearFlag_UPDATE(TIM1);
   }
@@ -501,6 +486,7 @@ void LPTIM1_IRQHandler(void)
 {
   if (LL_LPTIM_IsActiveFlag_ARRM(LPTIM))
   {
+    APP_OnTimerUpdate();
     _app_i2c.lptim_tick++;
     LL_LPTIM_ClearFLAG_ARRM(LPTIM);
   }
