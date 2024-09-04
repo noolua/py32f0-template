@@ -42,6 +42,7 @@ enum{
   i2cs_waiting_ack,
   i2cs_busy_rx,
   i2cs_busy_tx,
+  i2cs_tx_done,
 };
 #define I2C_CMD_ADD           ('a')   // add
 #define I2C_CMD_SUB           ('d')   // sub
@@ -72,15 +73,15 @@ static app_i2c_t _app_i2c = {
 /* Private function prototypes -----------------------------------------------*/
 static void APP_ConfigLPTIMOneShot(void);
 static void APP_TIM1Config(void);
-// static void APP_EnterStop(void);
-// static void APP_uDelay(uint32_t us);
+static void APP_EnterStop(void);
+static void APP_uDelay(uint32_t us);
 
-static void     APP_InitI2cSlave(void);
-static void     APP_GPIOConfig(void);
-static void     APP_TriggerESPRST();
-static void     APP_SlaveAckReady(void);
-static void     APP_HandleI2CSalve(void);
-static void     APP_OnTimerUpdate(void);
+static void  APP_InitI2cSlave(void);
+static void  APP_GPIOConfig(void);
+static void  APP_TriggerESPRST();
+static void  APP_SlaveAckReady(void);
+static void  APP_HandleI2CSalve(void);
+static void  APP_OnTimerUpdate(void);
 
 #ifdef PY32F002A_SOP8
 static void     APP_CheckAndDisableNRST(void);
@@ -229,34 +230,35 @@ static void APP_ConfigLPTIMOneShot(void)
   NVIC_SetPriority(LPTIM1_IRQn, 0);
 }
 
-// static void APP_uDelay(uint32_t us)
-// {
-//   uint32_t temp;
-//   SysTick->LOAD=us*(SystemCoreClock/1000000);
-//   SysTick->VAL=0x00;
-//   SysTick->CTRL|=SysTick_CTRL_ENABLE_Msk;
+static void APP_uDelay(uint32_t us)
+{
+  uint32_t temp;
+  SysTick->LOAD=us*(SystemCoreClock/1000000);
+  SysTick->VAL=0x00;
+  SysTick->CTRL|=SysTick_CTRL_ENABLE_Msk;
 
-//   do{
-//     temp=SysTick->CTRL;
-//   }while((temp&0x01)&&!(temp&(1<<16)));
+  do{
+    temp=SysTick->CTRL;
+  }while((temp&0x01)&&!(temp&(1<<16)));
 
-//   SysTick->CTRL=SysTick_CTRL_ENABLE_Msk;
-//   SysTick->VAL =0x00;
-// }
+  SysTick->CTRL=SysTick_CTRL_ENABLE_Msk;
+  SysTick->VAL =0x00;
+}
 
-// void APP_EnterStop(void){
-//   LL_PWR_EnableLowPowerRunMode();
-//   LL_LPTIM_Disable(LPTIM1);
-//   LL_LPTIM_Enable(LPTIM1);
-//   LL_mDelay(1);
+void APP_EnterStop(void){
+  LL_PWR_EnableLowPowerRunMode();
+  LL_LPTIM_Disable(LPTIM1);
+  LL_LPTIM_Enable(LPTIM1);
+  APP_uDelay(160);
+  // LL_mDelay(1);
 
-//   LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE2);
-//   LL_PWR_SetSramRetentionVolt(LL_PWR_SRAM_RETENTION_VOLT_0p9);
+  LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE2);
+  LL_PWR_SetSramRetentionVolt(LL_PWR_SRAM_RETENTION_VOLT_0p9);
 
-//   LL_LPTIM_StartCounter(LPTIM1, LL_LPTIM_OPERATING_MODE_ONESHOT);
-//   LL_LPM_EnableDeepSleep();
-//   __WFI();
-// }
+  LL_LPTIM_StartCounter(LPTIM1, LL_LPTIM_OPERATING_MODE_ONESHOT);
+  LL_LPM_EnableDeepSleep();
+  __WFI();
+}
 
 
 static void APP_InitI2cSlave(void)
@@ -320,7 +322,13 @@ static void APP_InitI2cSlave(void)
 }
 
 static void APP_HandleI2CSalve(void){
-  if(_app_i2c.status == i2cs_ready){
+  if(_app_i2c.status == i2cs_tx_done){
+    while(_app_i2c.stopseconds){
+      _app_i2c.stopseconds--;
+      APP_EnterStop();
+    }
+    APP_SlaveAckReady();
+  }else if(_app_i2c.status == i2cs_ready){
     uint8_t cmd = I2C_CMD_ERR;
     if(_app_i2c.recv_len > 0)
       cmd = _app_i2c.recv_buffer[0];
@@ -466,7 +474,8 @@ void APP_SlaveIRQCallback_NACK(void)
       LL_I2C_DisableIT_BUF(I2C1);
       LL_I2C_DisableIT_ERR(I2C1);
       LL_I2C_ClearFlag_AF(I2C1);
-      APP_SlaveAckReady();
+      // APP_SlaveAckReady();
+      _app_i2c.status = i2cs_tx_done;
     }
   }
 }
@@ -486,7 +495,6 @@ void LPTIM1_IRQHandler(void)
 {
   if (LL_LPTIM_IsActiveFlag_ARRM(LPTIM))
   {
-    APP_OnTimerUpdate();
     _app_i2c.lptim_tick++;
     LL_LPTIM_ClearFLAG_ARRM(LPTIM);
   }
