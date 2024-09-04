@@ -55,7 +55,7 @@ enum{
 /* Private variables ---------------------------------------------------------*/
 typedef struct app_i2c_s{
   int32_t tim1_tick, lptim_tick;
-  int32_t delta_time, status, reset_time;
+  int32_t delta_time, status;
   uint32_t stopseconds, rpc_count;
   uint8_t recv_len, resp_len, resp_send;
   uint8_t recv_buffer[I2C_BUFF_SZ], resp_buffer[I2C_BUFF_SZ];
@@ -66,7 +66,7 @@ typedef struct app_i2c_s{
 #define ts_now()      (ts_tick() + _app_i2c.delta_time)
 
 static app_i2c_t _app_i2c = {
-  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready, .reset_time = 0,
+  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready,
   .stopseconds = 0U, .rpc_count = 0U, .recv_len = 0, .resp_len = 0, .resp_send = 0
 };
 
@@ -76,6 +76,7 @@ static void APP_TIM1Config(void);
 static void APP_EnterStop(void);
 
 static void  APP_InitI2cSlave(void);
+static void  APP_DeinitI2cSlave(void);
 static void  APP_GPIOConfig(void);
 static void  APP_TriggerESPRST();
 static void  APP_SlaveAckReady(void);
@@ -125,9 +126,6 @@ int main(void)
   /* 配置I2C1（Slave模式下的I2C配置及相关GPIO初始化）,并使能*/
   APP_InitI2cSlave();
 
-  /*开始接收i2c消息*/
-  APP_SlaveAckReady();
-
   /* 处理 I2C1 事件（从机） */
   while(1){
     APP_HandleI2CSalve();
@@ -138,10 +136,6 @@ int main(void)
 }
 
 static void  APP_OnTimerUpdate(void){
-  if(_app_i2c.reset_time != 0 && _app_i2c.reset_time < ts_now()){
-    _app_i2c.reset_time = 0;
-    APP_TriggerESPRST();
-  }
 }
 
 #ifdef PY32F002A_SOP8
@@ -304,11 +298,35 @@ static void APP_InitI2cSlave(void)
 
 }
 
+static void  APP_DeinitI2cSlave(void)
+{
+  LL_I2C_Disable(I2C1);
+
+  /* 使能NVIC中断 */
+  // NVIC_SetPriority(I2C1_IRQn, 0);
+  NVIC_DisableIRQ(I2C1_IRQn);
+
+  /* 复位I2C */
+  LL_APB1_GRP1_ForceReset(LL_APB1_GRP1_PERIPH_I2C1);
+  LL_APB1_GRP1_ReleaseReset(LL_APB1_GRP1_PERIPH_I2C1);
+
+  /* 启用 I2C1 的外设时钟 */
+  LL_APB1_GRP1_DisableClock(LL_APB1_GRP1_PERIPH_I2C1);
+}
+
 static void APP_HandleI2CSalve(void){
   if(_app_i2c.status == i2cs_tx_done){
-    while(_app_i2c.stopseconds){
-      _app_i2c.stopseconds--;
-      APP_EnterStop();
+    if(_app_i2c.stopseconds > 0){
+
+      APP_DeinitI2cSlave();
+
+      while(_app_i2c.stopseconds){
+        _app_i2c.stopseconds--;
+        APP_EnterStop();
+      }
+
+      APP_TriggerESPRST();
+      APP_InitI2cSlave();
     }
     APP_SlaveAckReady();
   }else if(_app_i2c.status == i2cs_ready){
@@ -342,9 +360,7 @@ static void APP_HandleI2CSalve(void){
       _app_i2c.rpc_count++;
       int32_t seconds = *(int32_t*)&_app_i2c.recv_buffer[1];
       *(int32_t*)&_app_i2c.resp_buffer[0] = seconds;
-      if(seconds > 5) seconds -= 2;
       _app_i2c.stopseconds = seconds;
-      _app_i2c.reset_time = ts_now() + seconds + 1;
       _app_i2c.resp_len = 4;
       break;
     }
