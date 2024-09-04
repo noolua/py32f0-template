@@ -74,7 +74,6 @@ static app_i2c_t _app_i2c = {
 static void APP_ConfigLPTIMOneShot(void);
 static void APP_TIM1Config(void);
 static void APP_EnterStop(void);
-static void APP_uDelay(uint32_t us);
 
 static void  APP_InitI2cSlave(void);
 static void  APP_GPIOConfig(void);
@@ -230,27 +229,11 @@ static void APP_ConfigLPTIMOneShot(void)
   NVIC_SetPriority(LPTIM1_IRQn, 0);
 }
 
-static void APP_uDelay(uint32_t us)
-{
-  uint32_t temp;
-  SysTick->LOAD=us*(SystemCoreClock/1000000);
-  SysTick->VAL=0x00;
-  SysTick->CTRL|=SysTick_CTRL_ENABLE_Msk;
-
-  do{
-    temp=SysTick->CTRL;
-  }while((temp&0x01)&&!(temp&(1<<16)));
-
-  SysTick->CTRL=SysTick_CTRL_ENABLE_Msk;
-  SysTick->VAL =0x00;
-}
-
 void APP_EnterStop(void){
   LL_PWR_EnableLowPowerRunMode();
   LL_LPTIM_Disable(LPTIM1);
   LL_LPTIM_Enable(LPTIM1);
-  APP_uDelay(160);
-  // LL_mDelay(1);
+  LL_mDelay(1);
 
   LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE2);
   LL_PWR_SetSramRetentionVolt(LL_PWR_SRAM_RETENTION_VOLT_0p9);
@@ -359,6 +342,7 @@ static void APP_HandleI2CSalve(void){
       _app_i2c.rpc_count++;
       int32_t seconds = *(int32_t*)&_app_i2c.recv_buffer[1];
       *(int32_t*)&_app_i2c.resp_buffer[0] = seconds;
+      if(seconds > 5) seconds -= 2;
       _app_i2c.stopseconds = seconds;
       _app_i2c.reset_time = ts_now() + seconds + 1;
       _app_i2c.resp_len = 4;
@@ -396,13 +380,13 @@ static void APP_SlaveAckReady()
   _app_i2c.recv_buffer[0] = I2C_CMD_ERR;
   _app_i2c.status = i2cs_waiting_ack;
 
-  /* 使能应答 */
-  LL_I2C_AcknowledgeNextData(I2C1, LL_I2C_ACK);
-
   /* 使能中断 */
   LL_I2C_EnableIT_EVT(I2C1);
   LL_I2C_EnableIT_BUF(I2C1);
   LL_I2C_EnableIT_ERR(I2C1);
+
+  /* 使能应答 */
+  LL_I2C_AcknowledgeNextData(I2C1, LL_I2C_ACK);
 }
 
 
