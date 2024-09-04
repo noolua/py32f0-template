@@ -6,8 +6,8 @@
 #include "py32f0xx_bsp_clock.h"
 // #include "py32f0xx_bsp_printf.h"
 
-#define HalfSecond    (256 - 1)
-#define TIME_WAIT     (300*2)
+#define SecondPluse   (256 - 1)
+#define TIME_WAIT     (300)
 
 #define ESP_RST_PIN   (LL_GPIO_PIN_4)
 
@@ -56,6 +56,27 @@ static void APP_GPIO_Config(void)
   LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
   LL_GPIO_SetPinMode(GPIOA, ESP_RST_PIN, LL_GPIO_MODE_OUTPUT);
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+
+  /* 将 SCL 引脚配置为：可选功能、高速、开漏、上拉 */
+  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_3;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
+  GPIO_InitStruct.Alternate = LL_GPIO_AF_12;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* 将 SDA 引脚配置为：可选功能、高速、开漏、上拉 */
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_2;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
+  GPIO_InitStruct.Alternate = LL_GPIO_AF_12;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
 }
 
 static void APP_ConfigLPTIMOneShot(void)
@@ -65,15 +86,15 @@ static void APP_ConfigLPTIMOneShot(void)
   while(LL_RCC_LSI_IsReady() == 0);
   // Set LSI as LPTIM1 clock source
   LL_RCC_SetLPTIMClockSource(LL_RCC_LPTIM1_CLKSOURCE_LSI);
-  // Prescaler = 64
-  LL_LPTIM_SetPrescaler(LPTIM1, LL_LPTIM_PRESCALER_DIV64);
+  // Prescaler = 128
+  LL_LPTIM_SetPrescaler(LPTIM1, LL_LPTIM_PRESCALER_DIV128);
   LL_LPTIM_SetUpdateMode(LPTIM1, LL_LPTIM_UPDATE_MODE_ENDOFPERIOD);
   LL_LPTIM_EnableIT_ARRM(LPTIM1);
   LL_LPTIM_Enable(LPTIM1);
 
 
   /* 32768 / 128 = 256 */
-  LL_LPTIM_SetAutoReload(LPTIM1, HalfSecond);
+  LL_LPTIM_SetAutoReload(LPTIM1, SecondPluse);
 
   NVIC_EnableIRQ(LPTIM1_IRQn);
   NVIC_SetPriority(LPTIM1_IRQn, 0);
