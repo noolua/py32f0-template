@@ -78,7 +78,7 @@ static void APP_EnterStop(void);
 static void  APP_InitI2cSlave(void);
 static void  APP_DeinitI2cSlave(void);
 static void  APP_GPIOConfig(void);
-static void  APP_TriggerESPRST();
+static void  APP_ESPReset(void);
 static void  APP_SlaveAckReady(void);
 static void  APP_HandleI2CSalve(void);
 static void  APP_OnTimerUpdate(void);
@@ -111,7 +111,7 @@ int main(void)
   /* 配置系统时钟 */
   BSP_RCC_HSI_8MConfig();
   APP_TIM1Config();
-  LL_mDelay(1000);
+  LL_mDelay(100);
 
 #ifdef PY32F002A_SOP8
   APP_CheckAndDisableNRST();
@@ -125,6 +125,7 @@ int main(void)
 
   /* 配置I2C1（Slave模式下的I2C配置及相关GPIO初始化）,并使能*/
   APP_InitI2cSlave();
+  APP_ESPReset();
 
   /* 处理 I2C1 事件（从机） */
   while(1){
@@ -192,9 +193,9 @@ static void APP_GPIOConfig(void)
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
 }
 
-static void APP_TriggerESPRST(void){
+static void APP_ESPReset(void){
   LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
-  LL_mDelay(80);
+  LL_mDelay(50);
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
 }
 
@@ -282,7 +283,7 @@ static void APP_InitI2cSlave(void)
   /* I2C初始化 */
   LL_I2C_InitTypeDef I2C_InitStruct = {0};
   I2C_InitStruct.ClockSpeed      = 1000000;
-  I2C_InitStruct.DutyCycle       = LL_I2C_DUTYCYCLE_16_9;
+  I2C_InitStruct.DutyCycle       = LL_I2C_DUTYCYCLE_2;
   I2C_InitStruct.OwnAddress1     = PY32_OWN_ADDRESS<<1;
   I2C_InitStruct.TypeAcknowledge = LL_I2C_NACK;
   LL_I2C_Init(I2C1, &I2C_InitStruct);
@@ -325,8 +326,8 @@ static void APP_HandleI2CSalve(void){
         APP_EnterStop();
       }
 
-      APP_TriggerESPRST();
       APP_InitI2cSlave();
+      APP_ESPReset();
     }
     APP_SlaveAckReady();
   }else if(_app_i2c.status == i2cs_ready){
