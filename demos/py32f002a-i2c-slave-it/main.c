@@ -35,8 +35,10 @@
 
 /* Private define ------------------------------------------------------------*/
 #define ESP_RST_PIN           (LL_GPIO_PIN_4)
+#define MCTL_PIN              (LL_GPIO_PIN_1)
 
 #define I2C_BUFF_SZ           (64)
+#define I2C_RTX_TIMEOUT       (3)
 enum{
   i2cs_ready,
   i2cs_waiting_ack,
@@ -54,7 +56,7 @@ enum{
 
 /* Private variables ---------------------------------------------------------*/
 typedef struct app_i2c_s{
-  int32_t tim1_tick, lptim_tick;
+  int32_t tim1_tick, lptim_tick, rtx_timeout_tick;
   int32_t delta_time, status;
   uint32_t stopseconds, rpc_count;
   uint8_t recv_len, resp_len, resp_send;
@@ -62,11 +64,11 @@ typedef struct app_i2c_s{
 }app_i2c_t;
 
 
-#define ts_tick()     ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick)
+#define ts_tick()     ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick)   // mcu boot time in seconds
 #define ts_now()      (ts_tick() + _app_i2c.delta_time)
 
 static app_i2c_t _app_i2c = {
-  .tim1_tick = 0, .lptim_tick = 0, .delta_time = 0, .status = i2cs_ready,
+  .tim1_tick = 0, .lptim_tick = 0, .rtx_timeout_tick = 0, .delta_time = 0, .status = i2cs_ready,
   .stopseconds = 0U, .rpc_count = 0U, .recv_len = 0, .resp_len = 0, .resp_send = 0
 };
 
@@ -191,12 +193,19 @@ static void APP_GPIOConfig(void)
   LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
   LL_GPIO_SetPinMode(GPIOA, ESP_RST_PIN, LL_GPIO_MODE_OUTPUT);
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+
+  LL_GPIO_SetPinMode(GPIOA, MCTL_PIN, LL_GPIO_MODE_OUTPUT);
+  LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
+  // LL_GPIO_SetOutputPin(GPIOA, MCTL_PIN);
+  // LL_GPIO_TogglePin(GPIOA, MCTL_PIN);
 }
 
 static void APP_ESPReset(void){
+  LL_GPIO_TogglePin(GPIOA, MCTL_PIN);
   LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
   LL_mDelay(50);
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+  LL_GPIO_TogglePin(GPIOA, MCTL_PIN);
 }
 
 static void APP_ConfigLPTIMOneShot(void)
@@ -383,6 +392,14 @@ static void APP_HandleI2CSalve(void){
       break;
     }
     APP_SlaveAckReady();
+  }else if(_app_i2c.status == i2cs_busy_tx || _app_i2c.status == i2cs_busy_rx){
+    if(_app_i2c.rtx_timeout_tick != 0 && _app_i2c.rtx_timeout_tick < ts_tick()){
+      APP_DeinitI2cSlave();
+      LL_mDelay(100);
+      APP_InitI2cSlave();
+      APP_ESPReset();
+      APP_SlaveAckReady();
+    }
   }
 }
 
@@ -392,6 +409,7 @@ static void APP_SlaveAckReady()
   LL_I2C_DisableBitPOS(I2C1);
 
   /* 修改 */
+  _app_i2c.rtx_timeout_tick = 0;
   _app_i2c.recv_len = 0;
   _app_i2c.resp_send = 0;
   _app_i2c.recv_buffer[0] = I2C_CMD_ERR;
@@ -421,6 +439,7 @@ void APP_SlaveIRQCallback(void)
       // slave transmit
       _app_i2c.status = i2cs_busy_tx;
     }
+    _app_i2c.rtx_timeout_tick = ts_tick() + I2C_RTX_TIMEOUT;
   }
   else if(LL_I2C_IsActiveFlag_STOP(I2C1) == 1){
 
@@ -508,10 +527,11 @@ void LPTIM1_IRQHandler(void)
   */
 void Error_Handler(void)
 {
-  /* 无限循环 */
-  while (1)
-  {
-  }
+  NVIC_SystemReset();
+  // /* 无限循环 */
+  // while (1)
+  // {
+  // }
 }
 
 #ifdef  USE_FULL_ASSERT
@@ -526,9 +546,10 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* 用户可以根据需要添加自己的打印信息,
      例如: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* 无限循环 */
-  while (1)
-  {
-  }
+  // while (1)
+  // {
+  // }
+  NVIC_SystemReset();
 }
 #endif /* USE_FULL_ASSERT */
 
