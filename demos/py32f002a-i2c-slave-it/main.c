@@ -53,6 +53,8 @@ enum{
 #define I2C_CMD_TIME          ('t')   // set timestamp
 #define I2C_CMD_TIMENOW       ('n')   // get timestamp
 #define I2C_CMD_ERR           (0xEE)
+#define I2C_DEFAULT_IDLE      (5)     // 5 seconds idle time
+#define I2C_DEFAULT_STOP      (60 - I2C_DEFAULT_IDLE)   // 300 seconds
 
 /* Private variables ---------------------------------------------------------*/
 typedef struct app_i2c_s{
@@ -64,8 +66,8 @@ typedef struct app_i2c_s{
 }app_i2c_t;
 
 
-#define ts_tick()     ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick)   // mcu boot time in seconds
-#define ts_now()      (ts_tick() + _app_i2c.delta_time)
+// #define ts_tick()     ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick)   // mcu boot time in seconds
+// #define ts_now()      (ts_tick() + _app_i2c.delta_time)
 
 static app_i2c_t _app_i2c = {
   .tim1_tick = 0, .lptim_tick = 0, .rtx_timeout_tick = 0, .delta_time = 0, .status = i2cs_ready,
@@ -73,6 +75,14 @@ static app_i2c_t _app_i2c = {
 };
 
 /* Private function prototypes -----------------------------------------------*/
+static int32_t ts_tick(){
+  return ((_app_i2c.tim1_tick>>1) + _app_i2c.lptim_tick);
+}
+
+static int32_t ts_now(){
+  return (ts_tick() + _app_i2c.delta_time);
+}
+
 static void APP_ConfigLPTIMOneShot(void);
 static void APP_TIM1Config(void);
 static void APP_EnterStop(void);
@@ -84,6 +94,7 @@ static void  APP_ESPReset(void);
 static void  APP_SlaveAckReady(void);
 static void  APP_HandleI2CSalve(void);
 static void  APP_OnTimerUpdate(void);
+static void  APP_I2CResetWithESPDevice(void);
 
 #ifdef PY32F002A_SOP8
 static void     APP_CheckAndDisableNRST(void);
@@ -110,6 +121,7 @@ static void APP_transmit8(void){
 }
 int main(void)
 {
+  uint32_t ts_next, ts_stop;
   /* 配置系统时钟 */
   BSP_RCC_HSI_8MConfig();
   APP_TIM1Config();
@@ -125,17 +137,42 @@ int main(void)
   /*配置LPTIM*/
   APP_ConfigLPTIMOneShot();
 
+
   /* 配置I2C1（Slave模式下的I2C配置及相关GPIO初始化）,并使能*/
-  APP_InitI2cSlave();
-  APP_ESPReset();
+  while(1){
+    APP_I2CResetWithESPDevice();
+    ts_next = I2C_DEFAULT_IDLE + ts_tick();
+    while(ts_next > ts_tick()){
+      APP_HandleI2CSalve();
+    }
+
+    ts_stop = _app_i2c.stopseconds;
+    if(ts_stop == 0 || ts_stop > 1200)
+      ts_stop = I2C_DEFAULT_STOP;
+
+    ts_next = ts_stop + ts_tick();
+    while(ts_next > ts_tick()){
+      APP_EnterStop();
+    }
+  }
 
   /* 处理 I2C1 事件（从机） */
+  /*
   while(1){
-    APP_HandleI2CSalve();
+    // APP_HandleI2CSalve();
     // LL_mDelay(1);
     // do other jobs
     // ...
   }
+  */
+}
+
+static void APP_I2CResetWithESPDevice(void){
+  APP_ESPReset();
+  APP_DeinitI2cSlave();
+  LL_mDelay(80);
+  APP_InitI2cSlave();
+  APP_SlaveAckReady();
 }
 
 static void  APP_OnTimerUpdate(void){
@@ -203,7 +240,7 @@ static void APP_GPIOConfig(void)
 static void APP_ESPReset(void){
   LL_GPIO_TogglePin(GPIOA, MCTL_PIN);
   LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
-  LL_mDelay(50);
+  LL_mDelay(120);
   LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
   LL_GPIO_TogglePin(GPIOA, MCTL_PIN);
 }
@@ -326,6 +363,7 @@ static void  APP_DeinitI2cSlave(void)
 
 static void APP_HandleI2CSalve(void){
   if(_app_i2c.status == i2cs_tx_done){
+    /*
     if(_app_i2c.stopseconds > 0){
 
       APP_DeinitI2cSlave();
@@ -338,6 +376,7 @@ static void APP_HandleI2CSalve(void){
       APP_InitI2cSlave();
       APP_ESPReset();
     }
+    */
     APP_SlaveAckReady();
   }else if(_app_i2c.status == i2cs_ready){
     uint8_t cmd = I2C_CMD_ERR;
@@ -394,11 +433,7 @@ static void APP_HandleI2CSalve(void){
     APP_SlaveAckReady();
   }else if(_app_i2c.status == i2cs_busy_tx || _app_i2c.status == i2cs_busy_rx){
     if(_app_i2c.rtx_timeout_tick != 0 && _app_i2c.rtx_timeout_tick < ts_tick()){
-      APP_DeinitI2cSlave();
-      LL_mDelay(100);
-      APP_InitI2cSlave();
-      APP_ESPReset();
-      APP_SlaveAckReady();
+      APP_I2CResetWithESPDevice();
     }
   }
 }
