@@ -40,7 +40,8 @@ PYOCD_EXE		?= pyocd
 
 ##### Paths ############
 # PROJSRC	:= demos/py32f002a-lptim_none
-PROJSRC	:= demos/py32f002a-i2c-slave-it
+# PROJSRC	:= demos/py32f002a-i2c-slave-it
+PROJSRC	:= demos/py32f002a-adc-vcc
 # PROJSRC	:= Examples/PY32F0xx/LL/LPTIM/LPTIM1_OneShot
 
 
