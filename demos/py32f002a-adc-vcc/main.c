@@ -7,36 +7,32 @@
 #include "main.h"
 #include "py32f0xx_bsp_clock.h"
 
-#define ADC_CHANNEL_NUM                   (1)
 #define ESP_RST_PIN                       (LL_GPIO_PIN_4)
-
+#define ADC_CHANNEL_NUM                   (1)
+#define STOP_SECONDS                      (3)
+#define SWITCH_OFF                        (0)
+#define SWITCH_ON                         (1)
 #define VOLTAGE_TOOHIGH                   (2700)
 #define VOLTAGE_ON                        (2300)
 #define VOLTAGE_OFF                       (2000)
 
 uint16_t adc_values[ADC_CHANNEL_NUM];
-uint16_t switch_status = 0;   //0 off, 1 on
+uint16_t switch_status = SWITCH_OFF;      // 0 off, 1 on
 
-static void APP_ADCConfig(void);
-static void APP_GPIOConfig(void);
-static void APP_ConfigLPTIMOneShot(void);
+static void APP_InitADC(void);
+static void APP_InitGPIO(void);
+static void APP_InitLPTIM(void);
 static void APP_EnterStop(void);
 
 int main(void)
 {
   // Set system clock to 24MHz
-  uint32_t voltage = 0;
-  BSP_RCC_HSI_8MConfig();
+  BSP_RCC_HSI_24MConfig();
   LL_mDelay(1000);
 
-  /*配置GPIO*/
-  APP_GPIOConfig();
-
-  /*配置ADC*/
-  APP_ADCConfig();
-
-  /*配置LPTIM*/
-  APP_ConfigLPTIMOneShot();
+  APP_InitGPIO();
+  APP_InitADC();
+  APP_InitLPTIM();
 
   while (1)
   {
@@ -59,15 +55,15 @@ int main(void)
     while(LL_ADC_REG_IsConversionOngoing(ADC1) != 0);
     LL_ADC_Disable(ADC1);
 
-    voltage = __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_values[0], LL_ADC_RESOLUTION_12B);
+    uint32_t voltage = __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_values[0], LL_ADC_RESOLUTION_12B);
 
     if(voltage > VOLTAGE_ON){
-      switch_status = 1;
-    }else if(switch_status && voltage < VOLTAGE_OFF){
-      switch_status = 0;
+      switch_status = SWITCH_ON;
+    }else if(switch_status == SWITCH_ON && voltage < VOLTAGE_OFF){
+      switch_status = SWITCH_OFF;
     }
 
-    if(switch_status){
+    if(switch_status == SWITCH_ON){
       if(voltage > VOLTAGE_TOOHIGH){
         for(int i = 0; i < 5; i++){
           LL_GPIO_TogglePin(GPIOA, ESP_RST_PIN);
@@ -80,14 +76,12 @@ int main(void)
     }
 
     // enter stop model
-    int seconds = 5;
-    while(seconds--){
+    for(int i=0; i<STOP_SECONDS; i++)
       APP_EnterStop();
-    }
   }
 }
 
-static void APP_ADCConfig(void)
+static void APP_InitADC(void)
 {
   LL_ADC_InitTypeDef ADC_Init;
   LL_ADC_REG_InitTypeDef LL_ADC_REG_InitType;
@@ -127,7 +121,7 @@ static void APP_ADCConfig(void)
   LL_ADC_REG_SetSequencerChannels(ADC1, LL_ADC_CHANNEL_VREFINT);
 }
 
-static void APP_GPIOConfig(void)
+static void APP_InitGPIO(void)
 {
   LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
   LL_GPIO_SetPinMode(GPIOA, ESP_RST_PIN, LL_GPIO_MODE_OUTPUT);
@@ -135,7 +129,7 @@ static void APP_GPIOConfig(void)
   LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
 }
 
-static void APP_ConfigLPTIMOneShot(void)
+static void APP_InitLPTIM(void)
 {
 
   LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_LPTIM1);
