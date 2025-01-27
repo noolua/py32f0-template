@@ -7,14 +7,14 @@
 #include "main.h"
 #include "py32f0xx_bsp_clock.h"
 
-#define ESP_RST_PIN                       (LL_GPIO_PIN_4)
-#define ADC_CHANNEL_NUM                   (1)
-#define STOP_SECONDS                      (3)
-#define SWITCH_OFF                        (0)
-#define SWITCH_ON                         (1)
-#define VOLTAGE_TOOHIGH                   (2700)
-#define VOLTAGE_ON                        (2300)
-#define VOLTAGE_OFF                       (2000)
+#define ESP_RST_PIN                       LL_GPIO_PIN_4
+#define ADC_CHANNEL_NUM                   1
+#define STOP_SECONDS                      3
+#define SWITCH_OFF                        0
+#define SWITCH_ON                         1
+#define VOLTAGE_TOO_HIGH                  5100
+#define VOLTAGE_ON                        4800
+#define VOLTAGE_OFF                       3300
 
 uint16_t adc_values[ADC_CHANNEL_NUM];
 uint16_t switch_status = SWITCH_OFF;      // 0 off, 1 on
@@ -64,7 +64,7 @@ int main(void)
     }
 
     if(switch_status == SWITCH_ON){
-      if(voltage > VOLTAGE_TOOHIGH){
+      if(voltage > VOLTAGE_TOO_HIGH){
         for(int i = 0; i < 5; i++){
           LL_GPIO_TogglePin(GPIOA, ESP_RST_PIN);
           LL_mDelay(50);
