@@ -23,12 +23,14 @@ static void APP_InitADC(void);
 static void APP_InitGPIO(void);
 static void APP_InitLPTIM(void);
 static void APP_EnterStop(void);
+static void APP_MainLogic(uint32_t vcc);
+static uint32_t APP_ReadVCC(void);
 
 int main(void)
 {
-  // Set system clock to 24MHz
-  BSP_RCC_HSI_24MConfig();
-  LL_mDelay(1000);
+  // Set system clock to 8MHz
+  BSP_RCC_HSI_8MConfig();
+  LL_mDelay(100);
 
   APP_InitGPIO();
   APP_InitADC();
@@ -36,44 +38,8 @@ int main(void)
 
   while (1)
   {
-    LL_ADC_Enable(ADC1);
-    LL_mDelay(1);
-    LL_ADC_ClearFlag_EOC(ADC1);
-    LL_ADC_ClearFlag_EOS(ADC1);
-    LL_ADC_REG_StartConversion(ADC1);
-
-    for(int i=0; i < ADC_CHANNEL_NUM; i++){
-      while (LL_ADC_IsActiveFlag_EOC(ADC1) == 0);
-      LL_ADC_ClearFlag_EOC(ADC1);
-      adc_values[i] = LL_ADC_REG_ReadConversionData12(ADC1);
-    }
-
-    while(LL_ADC_IsActiveFlag_EOS(ADC1) == 0);
-    LL_ADC_ClearFlag_EOS(ADC1);
-
-    LL_ADC_REG_StopConversion(ADC1);
-    while(LL_ADC_REG_IsConversionOngoing(ADC1) != 0);
-    LL_ADC_Disable(ADC1);
-
-    uint32_t voltage = __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_values[0], LL_ADC_RESOLUTION_12B);
-
-    if(voltage > VOLTAGE_ON){
-      switch_status = SWITCH_ON;
-    }else if(switch_status == SWITCH_ON && voltage < VOLTAGE_OFF){
-      switch_status = SWITCH_OFF;
-    }
-
-    if(switch_status == SWITCH_ON){
-      if(voltage > VOLTAGE_TOO_HIGH){
-        for(int i = 0; i < 5; i++){
-          LL_GPIO_TogglePin(GPIOA, ESP_RST_PIN);
-          LL_mDelay(50);
-        }
-      }
-      LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
-    }else{
-      LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
-    }
+    // main logic
+    APP_MainLogic(APP_ReadVCC());
 
     // enter stop model
     for(int i=0; i<STOP_SECONDS; i++)
@@ -166,6 +132,48 @@ static void APP_EnterStop(void){
   LL_LPTIM_StartCounter(LPTIM1, LL_LPTIM_OPERATING_MODE_ONESHOT);
   LL_LPM_EnableDeepSleep();
   __WFI();
+}
+
+static uint32_t APP_ReadVCC(void){
+  LL_ADC_Enable(ADC1);
+  LL_mDelay(1);
+  LL_ADC_ClearFlag_EOC(ADC1);
+  LL_ADC_ClearFlag_EOS(ADC1);
+  LL_ADC_REG_StartConversion(ADC1);
+
+  for(int i=0; i < ADC_CHANNEL_NUM; i++){
+    while (LL_ADC_IsActiveFlag_EOC(ADC1) == 0);
+    LL_ADC_ClearFlag_EOC(ADC1);
+    adc_values[i] = LL_ADC_REG_ReadConversionData12(ADC1);
+  }
+  while(LL_ADC_IsActiveFlag_EOS(ADC1) == 0);
+  LL_ADC_ClearFlag_EOS(ADC1);
+
+  LL_ADC_REG_StopConversion(ADC1);
+  while(LL_ADC_REG_IsConversionOngoing(ADC1) != 0);
+  LL_ADC_Disable(ADC1);
+
+  return __LL_ADC_CALC_VREFANALOG_VOLTAGE(adc_values[0], LL_ADC_RESOLUTION_12B);
+}
+
+static void APP_MainLogic(uint32_t voltage){
+  if(voltage > VOLTAGE_ON){
+    switch_status = SWITCH_ON;
+  }else if(switch_status == SWITCH_ON && voltage < VOLTAGE_OFF){
+    switch_status = SWITCH_OFF;
+  }
+
+  if(switch_status == SWITCH_ON){
+    if(voltage > VOLTAGE_TOO_HIGH){
+      for(int i = 0; i < 5; i++){
+        LL_GPIO_TogglePin(GPIOA, ESP_RST_PIN);
+        LL_mDelay(50);
+      }
+    }
+    LL_GPIO_SetOutputPin(GPIOA, ESP_RST_PIN);
+  }else{
+    LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
+  }
 }
 
 void APP_ErrorHandler(void)
