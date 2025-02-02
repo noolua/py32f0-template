@@ -12,9 +12,9 @@
 #define STOP_SECONDS                      3
 #define SWITCH_OFF                        0
 #define SWITCH_ON                         1
-#define VOLTAGE_TOO_HIGH                  5100
-#define VOLTAGE_ON                        4800
-#define VOLTAGE_OFF                       3300
+#define VOLTAGE_TOO_HIGH                  2700
+#define VOLTAGE_ON                        2300
+#define VOLTAGE_OFF                       2000
 
 uint16_t adc_values[ADC_CHANNEL_NUM];
 uint16_t switch_status = SWITCH_OFF;      // 0 off, 1 on
@@ -25,22 +25,26 @@ static void APP_InitLPTIM(void);
 static void APP_EnterStop(void);
 static void APP_MainLogic(uint32_t vcc);
 static uint32_t APP_ReadVCC(void);
+static void APP_Wait4FlashProgram(void);
 
 int main(void)
 {
   // Set system clock to 8MHz
   BSP_RCC_HSI_8MConfig();
-  LL_mDelay(100);
+  LL_mDelay(1);
 
   APP_InitGPIO();
   APP_InitADC();
   APP_InitLPTIM();
 
+
+  // wait for pyocd flash program
+  APP_Wait4FlashProgram();
+
   while (1)
   {
     // main logic
     APP_MainLogic(APP_ReadVCC());
-
     // enter stop model
     for(int i=0; i<STOP_SECONDS; i++)
       APP_EnterStop();
@@ -174,6 +178,15 @@ static void APP_MainLogic(uint32_t voltage){
   }else{
     LL_GPIO_ResetOutputPin(GPIOA, ESP_RST_PIN);
   }
+}
+
+static void APP_Wait4FlashProgram(void)
+{
+  uint32_t vcc = APP_ReadVCC();
+  if(3100 < vcc && vcc < 3500){
+    LL_mDelay(5000);
+  }
+  APP_EnterStop();
 }
 
 void APP_ErrorHandler(void)
